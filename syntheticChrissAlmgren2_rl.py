@@ -154,7 +154,6 @@ class MarketEnvironment():
 
             # Convert the action to the number of shares to sell in the current step
             sharesToSellNow = self.shares_remaining * action
-            #print(sharesToSellNow)
 #             sharesToSellNow = min(self.shares_remaining * action, self.shares_remaining)
     
             if self.timeHorizon < 2:
@@ -169,7 +168,7 @@ class MarketEnvironment():
                 
             # Apply the temporary impact on the current stock price    
             info.exec_price = info.price - info.currentTemporaryImpact
-            # print(info.exec_price)
+            
             # Calculate the current total capture
             self.totalCapture += info.share_to_sell_now * info.exec_price
 
@@ -179,7 +178,6 @@ class MarketEnvironment():
             
             # Update the number of shares remaining
             self.shares_remaining -= info.share_to_sell_now
-            #print(self.shares_remaining)
             
             # Calculate the runnig total of the squares of shares sold and shares remaining
             self.totalSSSQ += info.share_to_sell_now ** 2
@@ -197,12 +195,10 @@ class MarketEnvironment():
             
             # If all the shares have been sold calculate E, V, and U, and give a positive reward.
             if self.shares_remaining <= 0:
+                
                 # Calculate the implementation shortfall
                 info.implementation_shortfall  = self.total_shares * self.startingPrice - self.totalCapture
                 info.totalCapture = self.totalCapture
-                # print("StartingPrice:", self.startingPrice)
-                # print("Capture:",info.totalCapture)
-                # print("IS:", info.implementation_shortfall)
                 # Set the done flag to True. This indicates that we have sold all the shares
                 info.done = True
         else:
