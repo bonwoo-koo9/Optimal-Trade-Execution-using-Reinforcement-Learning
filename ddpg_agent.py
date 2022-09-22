@@ -11,10 +11,10 @@ import torch.optim as optim
 
 BUFFER_SIZE = int(1e4)  # replay buffer size
 BATCH_SIZE = 128        # minibatch size
-GAMMA = 0.88            # discount factor
+GAMMA = 0.6            # discount factor
 TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 1e-5         # learning rate of the actor 
-LR_CRITIC = 1e-5        # learning rate of the critic
+LR_ACTOR = 1e-4         # learning rate of the actor 
+LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -60,6 +60,7 @@ class Agent():
         if len(self.memory) > BATCH_SIZE:
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA)
+
 
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""

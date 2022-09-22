@@ -1,6 +1,8 @@
+from operator import is_
 import random
 import numpy as np
 import collections
+import sys
 
 
 # ------------------------------------------------ Financial Parameters --------------------------------------------------- #
@@ -23,6 +25,7 @@ EPSILON = BID_ASK_SP / 2                                             # Fixed Cos
 SINGLE_STEP_VARIANCE = (DAILY_VOLAT  * STARTING_PRICE) ** 2          # Calculate single step variance
 ETA = BID_ASK_SP / (0.01 * DAILY_TRADE_VOL)                          # Price Impact for Each 1% of Daily Volume Traded
 GAMMA = BID_ASK_SP / (0.1 * DAILY_TRADE_VOL)                         # Permanent Impact Constant
+DATA = None
 
 # ----------------------------------------------------------------------------------------------------------------------- #
 
@@ -36,7 +39,7 @@ class MarketEnvironment():
                  num_tr=NUM_N,
                  lambd=LLAMBDA, STARTING_PRICE=STARTING_PRICE, EPSILON=EPSILON,
                  ETA=ETA, GAMMA=GAMMA,
-                 TOTAL_SHARES=TOTAL_SHARES, SINGLE_STEP_VARIANCE=SINGLE_STEP_VARIANCE):
+                 TOTAL_SHARES=TOTAL_SHARES, SINGLE_STEP_VARIANCE=SINGLE_STEP_VARIANCE, DATA = DATA):
 
         # Set the random seed
         random.seed(randomSeed)
@@ -49,6 +52,7 @@ class MarketEnvironment():
         
         # Initialize the Almgren-Chriss parameters so we can access them later
         self.total_shares = TOTAL_SHARES
+        self.price_data = DATA
         self.startingPrice = STARTING_PRICE
         self.llambda = lambd
         self.liquidation_time = lqd_time
@@ -77,6 +81,7 @@ class MarketEnvironment():
         
         # Set a variable to keep trak of the trade number
         self.k = 0
+        self.utility_list ={}
         
         
     def reset(self, seed = 0, liquid_time = LIQUIDATION_TIME, num_trades = NUM_N, lamb = LLAMBDA):
@@ -112,6 +117,20 @@ class MarketEnvironment():
         
         # Set the initial AC utility
         self.prevUtility = self.compute_AC_utility(self.total_shares)
+
+    def TWAP(self, sharesremaining, data):
+        capture = 0
+        for day in range(self.timeHorizon):
+            mid_price = (self.price_data['High'][day] + self.price_data['Low'][day]) / 2
+            num_share_twap = sharesremaining // self.timeHorizon
+            rest_share = sharesremaining % self.timeHorizon
+            if day == 0:
+                num_share_twap += rest_share
+            else:
+                num_share_twap = sharesremaining // self.timeHorizon
+            capture += mid_price * (num_share_twap)
+        
+        return int(capture)
         
 
     def step(self, action):
@@ -145,7 +164,8 @@ class MarketEnvironment():
             info.price = self.prevImpactedPrice + np.sqrt(self.singleStepVariance * self.tau) * random.normalvariate(0, 1)
       
         # If we are transacting, the stock price is affected by the number of shares we sell. The price evolves 
-        # according to the Almgren and Chriss price dynamics model. 
+        # according to the Almgren and Chriss price dynamics model.
+        
         if self.transacting:
             
             # If action is an ndarray then extract the number from the array
@@ -169,7 +189,10 @@ class MarketEnvironment():
                 
             # Apply the temporary impact on the current stock price    
             info.exec_price = info.price - info.currentTemporaryImpact
-            # print(info.exec_price)
+
+            # Mid price define
+            info.mid_price = (self.price_data['High'][0] + self.price_data['Low'][0]) / 2
+            
             # Calculate the current total capture
             self.totalCapture += info.share_to_sell_now * info.exec_price
 
@@ -191,18 +214,48 @@ class MarketEnvironment():
             self.prevImpactedPrice = info.price - info.currentPermanentImpact
             
             # Calculate the reward
-            currentUtility = self.compute_AC_utility(self.shares_remaining)
-            reward = (abs(self.prevUtility) - abs(currentUtility)) / abs(self.prevUtility)
-            self.prevUtility = currentUtility
+            currentUtility = int(self.compute_AC_utility(self.shares_remaining))
+            # currentUtility = int(self.compute_AC_utility(info.share_to_sell_now))
+            # 이 reward들로 하면 청산량 시작 청산량으로 수렴
+            # reward = (abs(self.prevUtility) - abs(currentUtility)) / abs(self.prevUtility)
+            # reward = sharesToSellNow * self.startingPrice - sharesToSellNow *info.exec_price
+            # DDPG 논문에서는 reward = exec_price*capture - midprice capture --> 이 reward로 하면 특정 청산량으로 수렴
+            is_ddpg = - (self.shares_remaining * self.startingPrice - self.shares_remaining * info.exec_price)
+            #print(is_ddpg)
+            is_twap = - (self.shares_remaining * self.startingPrice - self.TWAP(self.shares_remaining, self.price_data))
+            is_ac = - (self.get_AC_expected_shortfall(self.shares_remaining))
+            #print(is_twap)
+            reward = 0
+            if is_ddpg <= is_twap:
+                reward = -1
+            elif is_ddpg <= is_ac:
+                reward = -3
+            elif is_ddpg <= is_twap <= is_ac:
+                reward = -5
+            elif is_ddpg <= is_ac <= is_twap:
+                reward = -5
+            elif is_ddpg > is_twap:
+                reward = 1
+            elif is_ddpg > is_ac:
+                reward = 3
+            elif is_ddpg > is_twap > is_ac:
+                reward = 5
+            elif is_ddpg > is_ac > is_twap:
+                reward = 5
             
+            #reward = sharesToSellNow * info.exec_price - sharesToSellNow * self.startingPrice
+
+            self.prevUtility = currentUtility
+
+            #Utility Dictionary Append
+            self.utility_list[str(int(info.share_to_sell_now))] = currentUtility
+
             # If all the shares have been sold calculate E, V, and U, and give a positive reward.
             if self.shares_remaining <= 0:
                 # Calculate the implementation shortfall
                 info.implementation_shortfall  = self.total_shares * self.startingPrice - self.totalCapture
                 info.totalCapture = self.totalCapture
-                # print("StartingPrice:", self.startingPrice)
-                # print("Capture:",info.totalCapture)
-                # print("IS:", info.implementation_shortfall)
+
                 # Set the done flag to True. This indicates that we have sold all the shares
                 info.done = True
         else:
